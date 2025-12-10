@@ -805,6 +805,8 @@ def test_cli_output_text(mock_script_writer: Callable[[str], Path]) -> None:
     )
     assert res.returncode == 0
 
+    print("\n--------------------------------\n")
+    print(res.stdout)
     assert res.stdout.decode() == snapshot(
         """\
                                                                                                     \n\

@@ -11,6 +11,17 @@ from __future__ import annotations
 from rich_click.cli import main
 
 
+import sys
+
 if __name__ == "__main__":
     # main will run a Click command which will either exit or raise
-    main()
+    try:
+        if sys.platform == "win32":
+            # Handle legacy windows
+            import colorama  # type: ignore[import-untyped]
+
+            colorama.init()
+        main()
+    except UnicodeDecodeError as e:
+        print(f"Error: {e} \n\n\n {dir(e)}")
+        raise

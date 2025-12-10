@@ -42,3 +42,21 @@ jobs:
 
       - name: Run tests
         run: pytest --cov --cov-report term
+
+  windows-test:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          activate-environment: true
+
+      - name: Install dependencies
+        run: uv pip install ".[dev]"
+
+      - name: Run tests
+        run: pytest -vs --cov --cov-report term
