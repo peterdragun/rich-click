@@ -1,0 +1,120 @@
+name: Git Bisect
+
+on:
+  workflow_dispatch:
+    inputs:
+      good_commit:
+        description: 'Good commit SHA (known working)'
+        required: true
+        type: string
+      bad_commit:
+        description: 'Bad commit SHA (known broken)'
+        required: true
+        type: string
+      test_command:
+        description: 'Test command to run (default: pytest)'
+        required: false
+        type: string
+        default: 'esptool --help'
+      python_version:
+        description: 'Python version to use'
+        required: false
+        type: string
+        default: '3.12'
+      click_version:
+        description: 'Click version to use'
+        required: false
+        type: string
+        default: '8.1.*'
+      rich_version:
+        description: 'Rich version to use'
+        required: false
+        type: string
+        default: '14.*'
+
+jobs:
+  bisect:
+    runs-on: windows-latest
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for bisect
+
+      - name: Set up Python
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ inputs.python_version }}
+          activate-environment: true
+
+      - name: Start git bisect
+        shell: bash
+        run: |
+          git bisect start
+          git bisect good ${{ inputs.good_commit }}
+          git bisect bad ${{ inputs.bad_commit }}
+          uv pip install esptool
+
+      - name: Run bisect
+        shell: bash
+        run: |
+          # Create a script that will be used by git bisect run
+          # Use a Windows-compatible temp path
+          BISECT_SCRIPT="$RUNNER_TEMP/bisect-test.sh"
+          cat > "$BISECT_SCRIPT" << 'EOF'
+          #!/bin/bash
+          set -e
+
+          # Install dependencies
+          uv pip install ".[dev]" > /dev/null 2>&1
+          uv pip install --upgrade "click==$CLICK_VERSION" --prerelease=allow > /dev/null 2>&1
+          uv pip install --upgrade "rich==$RICH_VERSION" --prerelease=allow > /dev/null 2>&1
+
+          # Run the test command
+          echo "Running test command: $TEST_COMMAND"
+          $TEST_COMMAND
+          EOF
+
+          chmod +x "$BISECT_SCRIPT"
+
+          # Run bisect with the test script
+          git bisect run "$BISECT_SCRIPT" || true
+        env:
+          CLICK_VERSION: ${{ inputs.click_version }}
+          RICH_VERSION: ${{ inputs.rich_version }}
+          TEST_COMMAND: ${{ inputs.test_command }}
+
+      - name: Get bisect result
+        id: bisect_result
+        shell: bash
+        run: |
+          # Extract the first bad commit from bisect log
+          BISECT_LOG=$(git bisect log)
+          FIRST_BAD=$(echo "$BISECT_LOG" | grep -E "^# first bad commit: \[.*\]" | sed -E 's/^# first bad commit: \[([a-f0-9]+)\].*/\1/' || git rev-parse HEAD)
+
+          # If not found in that format, try alternative format
+          if [ "$FIRST_BAD" = "$(git rev-parse HEAD)" ]; then
+            FIRST_BAD=$(echo "$BISECT_LOG" | grep -E "first bad commit" | tail -1 | grep -oE '[a-f0-9]{40}' | head -1 || git rev-parse HEAD)
+          fi
+
+          echo "first_bad=$FIRST_BAD" >> $GITHUB_OUTPUT
+          echo "## Git Bisect Log" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "$BISECT_LOG" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Display result
+        shell: bash
+        run: |
+          echo "## Git Bisect Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**First bad commit:** \`${{ steps.bisect_result.outputs.first_bad }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View commit: https://github.com/${{ github.repository }}/commit/${{ steps.bisect_result.outputs.first_bad }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "First bad commit: ${{ steps.bisect_result.outputs.first_bad }}"
+
+      - name: Reset bisect
+        if: always()
+        shell: bash
+        run: git bisect reset
